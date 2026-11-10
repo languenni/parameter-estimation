@@ -5,9 +5,9 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.19.6
 #   kernelspec:
-#     display_name: Python 3
+#     display_name: myenv (3.9.6)
 #     language: python
 #     name: python3
 # ---
@@ -55,6 +55,9 @@
 #   Don't let a half-finished solution reach `curve_fit` without anyone noticing.
 
 # %%
+# %pip install jupytext
+
+# %%
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.integrate
@@ -86,7 +89,6 @@ plt.ylim(0, None)
 plt.legend()
 plt.show()
 
-
 # %% [markdown]
 # ## 1. One temperature
 #
@@ -104,12 +106,30 @@ plt.show()
 # solution.)
 
 # %%
-def cA_model(times, kf, kr):
-    """C_A (mol/L) at each of `times` (s), for rate constants kf and kr (1/s)."""
-    
 
+
+def cA_model(times, kf, kr):
+    """C_A (mol/L) at each of `times` (s), for rate constants kf and kr (1/s)."""   
+    C_A0 = 10 #mol/L
+        
+    def dCAdt(t, C_A):
+        C_B = C_A0 - C_A
+        return  kr*C_B -kf*C_A
+
+    sol = scipy.integrate.solve_ivp(dCAdt,(0, times[-1]),[C_A0],t_eval = times, rtol = 1e-8, atol = 1e-8)
+    if not sol.success:
+        raise RuntimeError(sol.message)
+    
+    return sol.y[0]
 
 # your test here
+kf, kr = 0.05, 0.02
+
+model_answer = cA_model(times, kf, kr)
+exact_answer = cA0*((kr)/(kr+kf))+(cA0-cA0*((kr)/(kr+kf)))*np.exp(-times*(kr+kf))
+
+assert np.allclose(model_answer,exact_answer)
+#It worked
 
 
 # %% [markdown]
@@ -120,8 +140,44 @@ def cA_model(times, kf, kr):
 # from the data. Roughly how long does $C_A$ take to get halfway to where it ends up?
 
 # %%
+T = 298.15 #K
+
+popt, pcov = scipy.optimize.curve_fit(cA_model,times, cA_data[T]) # uses defined temp as key to results
+perr = np.sqrt(np.diag(pcov))
+
+print(f'kf = {popt[0]:.4f} +/- {perr[0]:.4f}(curve_fit)')
+print(f'kr = {popt[1]:.4f} +/- {perr[1]:.4f}(curve_fit)')
 
 # %%
+T = 298.15 #K
+
+#Break down equation to get a geuss based of half life of Ca_O
+#C_A is at equibrium at about 5 right, so when the data meets about half way of about
+#10 to 5 the concentration should be 7.5. T 1/2 of the reaction is going to be around 18 s
+#1/2 = exp(-(kr + kf)t)
+#t = where it drops to about a half way from 10 to 5.5ish
+t_half = np.interp((cA0 + 5.5)/2, cA_data[T][4::-1], times[4::-1])
+print(f'When C_A is roughly equal to 7.5, t is about {t_half:.1f} sec')
+ #s, interpolation of t-1/2
+k_sum = np.log(2)/t_half # just what the sum of kr and 
+#Now if we rearrange the seccond equation to this part we get,
+#kf = (kf+kr)*(CAEQ/CA0)
+#which is kf = k_sum*(CAEQ/CA0)
+#CAEQ is equal to about 5 so lets dfine and start plugging thing in
+cAeq = 5.5
+
+kf_guess = k_sum*(cAeq/cA0)
+kr_guess = k_sum - kf_guess
+
+
+popt, pcov = scipy.optimize.curve_fit(cA_model,times, cA_data[T], p0 = [kf_guess,kr_guess]) # uses defined temp as key to results
+perr = np.sqrt(np.diag(pcov))
+
+
+print(f'guess: kf = {kf_guess:.4f}, kr = {kr_guess:.4f}')
+print(f'kf = {popt[0]:.4f} +/- {perr[0]:.4f}(curve_fit)')
+print(f'kr = {popt[1]:.4f} +/- {perr[1]:.4f}(curve_fit)')
+#18 seconds
 
 # %% [markdown]
 # **(c) Look at it.** Plot the data and the fitted curve, and below it the residuals
@@ -131,9 +187,40 @@ def cA_model(times, kf, kr):
 # choose it?
 
 # %%
+kf, kr = popt
+
+residuals = cA_data[T] - cA_model(times,kf, kr)
+
+
+plt.plot(times, cA_model(times, kf, kr), '-', label = f'Curve_Fit for 298.15 K')
+
+
+plt.plot(times, cA_data[T], 'o', label=f'{T:.2f} K')
+plt.plot(0, cA0, 'ko')
+plt.xlabel('time (s)')
+plt.ylabel('$C_A$ (mol/L)')
+plt.ylim(0, None)
+plt.legend()
+plt.show()
+plt.plot(times, residuals, 'o', label='residuals')
+plt.axhline(0, color='k')
+plt.xlabel('time (s)')
+plt.ylabel('data - model (mol/L)')
+plt.legend()
+plt.show()
 
 # %% [markdown]
 # *Answer:*
+
+# %% [markdown]
+#
+# I. kf = 0.0168 +/- 0.0008 and kr = 0.0201 +/- 0.0015
+# II. When p0 wasnt geussed the default answer was way off where...
+# kf = 237.2838 +/- 32016.3111
+# kr = 429.1295 +/- 57893.3634
+# ... it did end up working however.
+#
+# III. THe starting guess was derived the same way you would get a time constant from like a newtons law of cooling problem with interesting logic. First you wanted to figure out the half way point was which you get from looking at what happens to when C_A is at equilibirum. I just said 5.5 as it seemed when C_A continued in the data that it bounced between 5.4 and 5.6. Reason why this is important is because the half way point between 5.5 and 10 is interpolated to calculate the t 1/2 so the I can isolate the sum of kf and kr. Then I used the second equation and reasange to find out that the sum of kf and kr multiplied against CA_EQ and CA_0 is equal to kf. Then just use the sum to find out kr. This gives you a really great aprroximate geuss.
 
 # %% [markdown]
 # ## 2. Three temperatures, in two steps
